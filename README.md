@@ -55,3 +55,5 @@ Vite's dev server proxies `/api` to `localhost:3000` automatically (see `vite.co
 
 **checkout-api** (`.env.example`): `DATABASE_URL`, `PORT`.
 **storefront** (`.env.example`): `VITE_API_BASE_URL` — leave unset for local dev (the Vite proxy handles it); set it for a production build where the storefront is deployed separately from the API.
+Triggering PR CI check
+Triggering PR CI check 2
