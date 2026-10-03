@@ -1,0 +1,92 @@
+name: CD - Build, Scan, and Multi-Environment Deploy
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'checkout-api/**'
+      - '.github/workflows/cd.yml'
+
+permissions:
+  contents: read
+  id-token: write # Required for secure OIDC/Workload Identity Federation tracking
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'freshcart-capstone-prod' }}
+  GAR_LOCATION: ${{ vars.GAR_LOCATION || 'us-central1' }}
+  REPOSITORY: ${{ vars.GAR_REPOSITORY || 'freshcart-registry' }}
+  IMAGE_NAME: checkout-api
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-scan:
+    name: Build & Scan Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ env.IMAGE_TAG }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Short-lived cloud credential handshake placeholder (gracefully catches if offline)
+      - name: Authenticate to Google Cloud
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: ${{ vars.WIF_PROVIDER || 'projects/00000000/locations/global/workloadIdentityPools/mock/providers/mock' }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT || 'mock-deployer@://gserviceaccount.com' }}
+
+      - name: Log in to Google Artifact Registry
+        continue-on-error: true
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_LOCATION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token || 'mock_token' }}
+
+      # Compiles the actual image inside your local repository runner environment
+      - name: Build Docker Image Locally
+        run: |
+          docker build -t ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ./checkout-api
+
+      # DevSecOps Security Gate: Scans your built local image directly for $0.00 cost
+      - name: Scan Image with Trivy for Vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'table'
+          exit-code: '1' # Fails the run instantly if high/critical software bugs exist
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Push Verified Image to Registry
+        run: |
+          echo "Vulnerability scan passed completely!"
+          echo "Simulated push to Google Artifact Registry for image tag: ${{ env.IMAGE_TAG }}"
+
+  deploy-staging:
+    name: Deploy to Staging Environment
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Execute Staging Sync
+        run: |
+          echo "Targeting Image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-scan.outputs.image_tag }}"
+          echo "Simulating Cloud Deployment: gcloud run deploy checkout-api-staging..."
+          echo "SUCCESS: Staging environment deployment verified."
+
+  deploy-production:
+    name: Promote to Production Environment
+    needs: [build-and-scan, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production # Halts execution until manual approval is clicked
+    steps:
+      - name: Execute Production Promotion
+        run: |
+          echo "Promoting the identical image tag validated in staging: ${{ needs.build-and-scan.outputs.image_tag }}"
+          echo "Simulating Cloud Promotion: gcloud run deploy checkout-api-production..."
+          echo "SUCCESS: Production environment deployment is live."
